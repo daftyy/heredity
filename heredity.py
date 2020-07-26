@@ -127,6 +127,24 @@ def powerset(s):
 		)
 	]
 
+def _get_gene_passing_prob(gene_count):
+    """
+    Returns probability of receiving a gene from parent based on their gene count
+    """
+    return (
+        1 - PROBS["mutation"]
+        if gene_count == 2
+        else (1 - PROBS["mutation"]) * 0.5
+        if gene_count == 1
+        else PROBS["mutation"]
+    )
+
+
+PROBABILITY_BY_INHERITANCE = {
+    0: lambda p1_prob, p2_prob: (1 - p1_prob) * (1 - p2_prob),
+    1: lambda p1_prob, p2_prob: p1_prob * (1 - p2_prob) + (1 - p1_prob) * p2_prob,
+    2: lambda p1_prob, p2_prob: p1_prob * p2_prob,
+}
 
 def joint_probability(people, one_gene, two_genes, have_trait):
 	"""
@@ -140,114 +158,30 @@ def joint_probability(people, one_gene, two_genes, have_trait):
 			* everyone not in set` have_trait` does not have the trait.
 	"""
 
-	final_prob = 1
+	cummulative_prob = 1
 
 	for person in people:
-		probability = 1
-        
-		# probability that the person has one gene
-		if person in one_gene:
-			# find their parents
-			mom = people[person]['mother']
-			dad = people[person]['father']
-			# if person has no parents
-			if mom == None and dad == None:
-				# unconditional probability of having one gene
-				probability = PROBS["gene"][1]
-			# if person has parents
-			else:
-				# gene comes from mother and not father (probability)
-				if mom in one_gene:
-					# mom has one harmful gene
-					# harmful gene is selected from mom with p = 0.5
-					probability = 0.5
-				elif mom in two_genes:
-					# mom has both harmful genes
-					probability = 1 - PROBS["mutation"]
-				else:
-					# mom has no harmful genes
-					probability = PROBS["mutation"]
-				
-				if dad in one_gene:
-					# harmless gene is selected from dad with p = 0.5
-					probability = (probability * 0.5) + ((1 - probability) * 0.5)
-					# (multiplying because joint probability)
-				elif dad in two_genes:
-					# no matter which gene is selected
-					# it mutates into the harmless form with p = PROBS["mutation"]
-					probability = (probability * PROBS["mutation"]) + ((1 - PROBS["mutation"]) * (1 -probability))
-				else:
-					# this means dad has no harmful gene
-					# no matter which harmless gene is selected
-					# it stays harmless with probability 1 - PROBS["mutation"]
-					probability = (probability * (1- PROBS["mutation"])) + ((1 -probability) * PROBS["mutation"])
+		person_gene_count = 2 if person in two_genes else 1 if person in one_gene else 0
+		trait_prob = PROBS["trait"][person_gene_count][person in have_trait]
+		gene_prob = None
 
+		mother = people[person]["mother"]
+		father = people[person]["father"]
 
+		if mother and father:
+			mother_gene_count = 2 if mother in two_genes else 1 if mother in one_gene else 0
+			father_gene_count = 2 if father in two_genes else 1 if father in one_gene else 0
 
-			# given one harmful gene
-			# probability of trait | not
-			probability *= PROBS["trait"][1][person in have_trait]
-
-		elif person in two_genes:
-			# find their parents
-			mom = people[person]['mother']
-			dad = people[person]['father']
-			# if a person has no parents
-			if mom == None and dad == None:
-				# unconditional probability of having two genes
-				probability = PROBS["gene"][2]
-			else:
-				# both genes harmful
-				# one harmful gene comes from each parent
-				if mom in one_gene:
-					probability = 0.5
-				elif mom in two_genes:
-					probability = 1 - PROBS["mutation"]
-				else:
-					probability = PROBS["mutation"]
-
-				if dad in one_gene:
-					probability = (probability * 0.5) + ((1 - probability) * 0.5)
-				elif dad in two_genes:
-					probability = (probability * PROBS["mutation"]) + ((1 - PROBS["mutation"]) * (1 -probability))
-				else:
-					probability = (probability * (1- PROBS["mutation"])) + ((1 -probability) * PROBS["mutation"])
-
-			# given two genes,
-			# probablity of trait
-			probability *= PROBS["trait"][2][person in have_trait]
-
+			gene_prob = PROBABILITY_BY_INHERITANCE[person_gene_count](
+				_get_gene_passing_prob(mother_gene_count),
+                _get_gene_passing_prob(father_gene_count),
+            )
 		else:
-			# person has no harmful genes
-			# find his parents
-			mom = people[person]['mother']
-			dad = people[person]['father']
+			gene_prob = PROBS["gene"][person_gene_count]
 
-			if mom == None and dad == None:
-				# unconditional probability of having no harmful genes
-				probability = PROBS["gene"][0]
-			else:
-				# no harmful genes come from parents
-				if mom in one_gene:
-					probability = 0.5
-				elif mom in two_genes:
-					probability = 1 - PROBS["mutation"]
-				else:
-					probability = PROBS["mutation"]
+		cummulative_prob *= gene_prob * trait_prob
 
-				if dad in one_gene:
-					probability = (probability * 0.5) + ((1 - probability) * 0.5)
-				elif dad in two_genes:
-					probability = (probability * PROBS["mutation"]) + ((1 - PROBS["mutation"]) * (1 -probability))
-				else:
-					probability = (probability * (1- PROBS["mutation"])) + ((1 -probability) * PROBS["mutation"])
-
-			# given no harmful genes, probability of trait
-			probability *= PROBS["trait"][0][person in have_trait]
-
-		final_prob *= probability
-	
-	return final_prob
+	return cummulative_prob
 
 def update(probabilities, one_gene, two_genes, have_trait, p):
 	"""
@@ -258,13 +192,8 @@ def update(probabilities, one_gene, two_genes, have_trait, p):
 	"""
 	
 	for person in probabilities:
-		if person in one_gene:
-			probabilities[person]["gene"][1] += p	
-		elif person in two_genes:
-			probabilities[person]["gene"][2] += p
-		else:
-			probabilities[person]["gene"][0] += p
-
+		gene_count = 2 if person in two_genes else 1 if person in one_gene else 0
+		probabilities[person]["gene"][gene_count] += p
 		probabilities[person]["trait"][person in have_trait] += p
 
 def normalize(probabilities):
@@ -272,16 +201,15 @@ def normalize(probabilities):
     Update `probabilities` such that each probability distribution
     is normalized (i.e., sums to 1, with relative proportions the same).
     """
-	
 
     for person in probabilities:
-        total_genes = sum(probabilities[person]["gene"].values())
-        for i in probabilities[person]["gene"]:
-            probabilities[person]["gene"][i] = probabilities[person]["gene"][i] / total_genes
+        gene_sum = sum(probabilities[person]["gene"].values())
+        for key in probabilities[person]["gene"]:
+            probabilities[person]["gene"][key] /= gene_sum
 
-        total_traits = sum(probabilities[person]["trait"].values())
-        for i in probabilities[person]["trait"]:
-            probabilities[person]["trait"][i] = probabilities[person]["trait"][i] / total_traits
+        trait_sum = sum(probabilities[person]["trait"].values())
+        for key in probabilities[person]["trait"]:
+            probabilities[person]["trait"][key] /= trait_sum
 	
 
 if __name__ == "__main__":
